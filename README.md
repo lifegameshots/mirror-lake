@@ -3,6 +3,8 @@
 거울처럼 멈춘 고산 호수 위로 고리가 있는 행성이 내려앉는, 새벽 4시 47분의 풍경.
 Three.js 한 파일로 그린 실시간 장면입니다.
 
+**▶ 라이브: <https://lifegameshots.github.io/mirror-lake/>**
+
 ![preview](preview.png)
 
 ## 열기
