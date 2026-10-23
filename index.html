@@ -1,0 +1,1560 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>MIRROR LAKE — 새벽</title>
+<style>
+  :root{
+    --ink: #eef4ff;
+    --ink-dim: rgba(212,226,244,.62);
+    --font: ui-sans-serif, system-ui, "Helvetica Neue", "Apple SD Gothic Neo", "Malgun Gothic", "Segoe UI", sans-serif;
+  }
+  *{ margin:0; padding:0; box-sizing:border-box; }
+  html, body{ width:100%; height:100%; background:#04070c; overflow:hidden; }
+  body{ -webkit-font-smoothing:antialiased; }
+  #stage{ display:block; width:100%; height:100%; }
+
+  #veil{
+    position:fixed; inset:0; pointer-events:none; z-index:2;
+    background:
+      radial-gradient(130% 95% at 50% 44%, rgba(0,0,0,0) 42%, rgba(2,5,10,.30) 82%, rgba(2,5,10,.58) 100%),
+      linear-gradient(to bottom, rgba(2,5,10,.30) 0%, rgba(0,0,0,0) 16%, rgba(0,0,0,0) 82%, rgba(2,5,10,.42) 100%);
+  }
+
+  #hud{
+    position:fixed; left:clamp(22px, 4.6vw, 68px); bottom:clamp(24px, 6.4vh, 72px);
+    z-index:3; pointer-events:none;
+    opacity:0; transform:translateY(10px);
+    transition:opacity 2.8s ease, transform 2.8s cubic-bezier(.2,.7,.2,1);
+  }
+  #hud.on{ opacity:1; transform:none; }
+  #hud .eyebrow{
+    font:500 10px/1 var(--font); letter-spacing:.46em; text-transform:uppercase;
+    color:rgba(206,222,242,.50); margin-bottom:16px; padding-left:2px;
+  }
+  #hud h1{
+    font:200 clamp(32px, 4.4vw, 58px)/1.02 var(--font);
+    letter-spacing:-.012em; color:var(--ink);
+    text-shadow:0 2px 34px rgba(0,0,0,.55);
+  }
+  #hud .sub{
+    margin-top:14px; font:300 clamp(12px, 1.05vw, 15px)/1.6 var(--font);
+    color:var(--ink-dim); letter-spacing:.015em;
+  }
+
+  #hint{
+    position:fixed; right:clamp(20px, 3.2vw, 46px); bottom:clamp(22px, 4.2vh, 40px);
+    z-index:3; pointer-events:none;
+    font:300 11px/1.5 var(--font); letter-spacing:.14em;
+    color:rgba(190,208,230,.42);
+    opacity:0; transition:opacity 2s ease;
+  }
+  #hint.on{ opacity:1; }
+  #hint.gone{ opacity:0; transition:opacity 2.6s ease; }
+
+  #boot{
+    position:fixed; inset:0; z-index:9; display:flex; flex-direction:column;
+    align-items:center; justify-content:center; gap:18px;
+    background:#04070c; color:rgba(200,216,238,.62);
+    font:300 11px/1 var(--font); letter-spacing:.38em; text-transform:uppercase;
+    transition:opacity 1.5s ease; 
+  }
+  #boot.done{ opacity:0; pointer-events:none; }
+  #boot .bar{ width:132px; height:1px; background:rgba(150,180,220,.18); overflow:hidden; }
+  #boot .bar i{ display:block; width:38%; height:100%; background:rgba(190,214,246,.75);
+    animation:sweep 1.7s cubic-bezier(.5,0,.5,1) infinite; }
+  @keyframes sweep{
+    0%{ transform:translateX(-110%); } 100%{ transform:translateX(360%); }
+  }
+  #boot p{ margin-left:.38em; }
+  #boot.error{ letter-spacing:.04em; text-transform:none; font-size:13px; padding:0 32px; text-align:center; line-height:1.7; }
+</style>
+</head>
+<body>
+  <canvas id="stage"></canvas>
+  <div id="veil"></div>
+
+  <div id="hud">
+    <div class="eyebrow">Mirror Lake · 04:47</div>
+    <h1>거울 호수</h1>
+    <p class="sub">행성이 물 위에 내려앉은 새벽</p>
+  </div>
+
+  <div id="hint">마우스를 움직이면 시선이 따라갑니다</div>
+
+  <div id="boot">
+    <div class="bar"><i></i></div>
+    <p>새벽을 준비하는 중</p>
+  </div>
+
+<script>
+(async function () {
+  'use strict';
+
+  const DEBUG = new URLSearchParams(location.search).get('debug') === '1';
+  let dbgEl = null;
+  if (DEBUG) {
+    dbgEl = document.createElement('pre');
+    dbgEl.id = 'dbg';
+    dbgEl.style.cssText = 'position:fixed;left:0;top:0;z-index:99;color:#ff7b7b;font:11px/1.35 monospace;white-space:pre-wrap;max-width:100%;max-height:100%;overflow:auto;background:rgba(0,0,0,.7);padding:6px;';
+    document.body.appendChild(dbgEl);
+  }
+  const dbg = (s) => { if (dbgEl) dbgEl.textContent += s + '\n'; };
+  const _ce = console.error.bind(console);
+  const _cw = console.warn.bind(console);
+  console.error = (...a) => { dbg('ERR ' + a.map(x => String(x)).join(' ').slice(0, 3000)); _ce(...a); };
+  console.warn  = (...a) => { dbg('WARN ' + a.map(x => String(x)).join(' ').slice(0, 1200)); _cw(...a); };
+  window.addEventListener('error', e => dbg('WINERR ' + e.message));
+  window.addEventListener('unhandledrejection', e => dbg('REJ ' + ((e.reason && e.reason.message) || e.reason)));
+
+  const bootEl = document.getElementById('boot');
+  const hudEl  = document.getElementById('hud');
+  const hintEl = document.getElementById('hint');
+
+  const CDNS = [
+    'https://cdn.jsdelivr.net/npm/three@0.160.1/build/three.module.js',
+    'https://unpkg.com/three@0.160.1/build/three.module.js',
+    'https://esm.sh/three@0.160.1'
+  ];
+
+  async function loadThree () {
+    for (const url of CDNS) {
+      try {
+        const m = await import(url);
+        if (m && m.Scene) return m;
+      } catch (e) {
+        console.warn('[mirror-lake] CDN 실패:', url, e && e.message);
+      }
+    }
+    throw new Error('Three.js를 불러오지 못했습니다. 네트워크 연결을 확인한 뒤 새로고침해 주세요.');
+  }
+
+  function fail (err) {
+    console.error(err);
+    bootEl.classList.add('error');
+    bootEl.innerHTML = '<p>' + String(err && err.message ? err.message : err) + '</p>';
+  }
+
+  let THREE;
+  try {
+    THREE = await loadThree();
+  } catch (e) { fail(e); return; }
+
+  try {
+    start(THREE);
+  } catch (e) { fail(e); }
+
+  /* ------------------------------------------------------------------ */
+  /*  작은 수학 유틸                                                      */
+  /* ------------------------------------------------------------------ */
+  function start (THREE) {
+    const params = new URLSearchParams(location.search);
+    const STILL  = params.get('still') === '1';
+    const RAW    = params.get('raw') === '1';
+    const NOREFL = params.get('norefl') === '1';
+    const MSAA   = params.get('msaa') === '4' ? 4 : 0;
+    const RT_BYTE = params.get('rt') === 'byte';
+    const CAPTURE = params.get('capture') === '1';
+    let   time   = parseFloat(params.get('t') || '0') || 0;
+
+    const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
+    const smoothstep = (a, b, x) => {
+      const t = clamp((x - a) / (b - a), 0, 1);
+      return t * t * (3 - 2 * t);
+    };
+
+    // 결정론적 난수 (장면이 매번 같도록)
+    let seed = 20261023;
+    const rand = () => {
+      seed = (seed * 1664525 + 1013904223) % 4294967296;
+      return seed / 4294967296;
+    };
+
+    /* --- 2D 밸류 노이즈 (지형 생성용) --------------------------------- */
+    function hash2 (x, y) {
+      const h = Math.sin(x * 127.1 + y * 311.7) * 43758.5453123;
+      return h - Math.floor(h);
+    }
+    function vnoise (x, y) {
+      const xi = Math.floor(x), yi = Math.floor(y);
+      const xf = x - xi, yf = y - yi;
+      const u = xf * xf * (3 - 2 * xf);
+      const v = yf * yf * (3 - 2 * yf);
+      const a = hash2(xi, yi),     b = hash2(xi + 1, yi);
+      const c = hash2(xi, yi + 1), d = hash2(xi + 1, yi + 1);
+      return (a * (1 - u) + b * u) * (1 - v) + (c * (1 - u) + d * u) * v;
+    }
+    function fbm2 (x, y, oct) {
+      let s = 0, amp = 0.5, f = 1, norm = 0;
+      for (let i = 0; i < oct; i++) {
+        s += amp * vnoise(x * f, y * f);
+        norm += amp; amp *= 0.5; f *= 2.03;
+      }
+      return s / norm;
+    }
+    function ridged2 (x, y, oct) {
+      let s = 0, amp = 0.5, f = 1, norm = 0;
+      for (let i = 0; i < oct; i++) {
+        const n = 1 - Math.abs(vnoise(x * f, y * f) * 2 - 1);
+        s += amp * n * n;
+        norm += amp; amp *= 0.5; f *= 2.11;
+      }
+      return s / norm;
+    }
+
+    /* ------------------------------------------------------------------ */
+    /*  팔레트                                                             */
+    /* ------------------------------------------------------------------ */
+    const HORIZON_HEX = 0x1a2436;
+    const FOG_DENSITY = 0.00030;
+    const HORIZON = new THREE.Color(HORIZON_HEX);
+    const ZENITH  = new THREE.Color(0x05080f);
+    const DEEP    = new THREE.Color(0x03080f);
+
+    /* ------------------------------------------------------------------ */
+    /*  렌더러 · 카메라 · 씬                                                */
+    /* ------------------------------------------------------------------ */
+    const canvas = document.getElementById('stage');
+    const renderer = new THREE.WebGLRenderer({
+      canvas, antialias: false, alpha: false, powerPreference: 'high-performance',
+      stencil: false, preserveDrawingBuffer: CAPTURE
+    });
+
+    let pixelRatio = Math.min(window.devicePixelRatio || 1, 1.5);
+    const MAX_PIXELS = 2.9e6;
+    {
+      const raw = window.innerWidth * window.innerHeight * pixelRatio * pixelRatio;
+      if (raw > MAX_PIXELS) pixelRatio *= Math.sqrt(MAX_PIXELS / raw);
+    }
+    renderer.setPixelRatio(pixelRatio);
+    renderer.setSize(window.innerWidth, window.innerHeight, false);
+    renderer.outputColorSpace = THREE.LinearSRGBColorSpace; // 합성 패스에서 직접 인코딩
+    renderer.toneMapping = THREE.NoToneMapping;
+    renderer.setClearColor(0x04070c, 1);
+    renderer.autoClear = true;
+
+    const scene = new THREE.Scene();
+    scene.fog = new THREE.FogExp2(HORIZON_HEX, FOG_DENSITY);
+
+    const camera = new THREE.PerspectiveCamera(52, window.innerWidth / window.innerHeight, 1, 20000);
+    camera.position.set(0, 7.2, 233);
+
+    /* ------------------------------------------------------------------ */
+    /*  빛                                                                 */
+    /* ------------------------------------------------------------------ */
+    const SUN_DIR = new THREE.Vector3(0.612, 0.061, -0.789).normalize();   // 오른쪽 지평선 아래
+    const PLANET_AZ = -11 * Math.PI / 180;
+    const PLANET_EL = 19 * Math.PI / 180;
+    const PLANET_DIR = new THREE.Vector3(
+      Math.sin(PLANET_AZ) * Math.cos(PLANET_EL),
+      Math.sin(PLANET_EL),
+      -Math.cos(PLANET_AZ) * Math.cos(PLANET_EL)
+    ).normalize();
+
+    const sunLight = new THREE.DirectionalLight(0xffc39a, 2.2);
+    sunLight.position.copy(SUN_DIR).multiplyScalar(3000);
+    scene.add(sunLight);
+
+    const planetLight = new THREE.DirectionalLight(0x8fb0ff, 0.30);
+    planetLight.position.copy(PLANET_DIR).multiplyScalar(3000);
+    scene.add(planetLight);
+
+    const hemi = new THREE.HemisphereLight(0x34507a, 0x03050a, 1.05);
+    scene.add(hemi);
+
+    const skyFill = new THREE.DirectionalLight(0x7a9ad0, 0.40);
+    skyFill.position.set(-0.3, 1.0, 0.55).multiplyScalar(3000);
+    scene.add(skyFill);
+
+    /* ------------------------------------------------------------------ */
+    /*  GLSL 공용 노이즈                                                    */
+    /* ------------------------------------------------------------------ */
+    const NOISE = `
+      float hash13(vec3 p3){
+        p3 = fract(p3 * 0.1031);
+        p3 += dot(p3, p3.zyx + 31.32);
+        return fract((p3.x + p3.y) * p3.z);
+      }
+      vec3 mod289(vec3 x){ return x - floor(x * (1.0 / 289.0)) * 289.0; }
+      vec4 mod289(vec4 x){ return x - floor(x * (1.0 / 289.0)) * 289.0; }
+      vec4 permute(vec4 x){ return mod289(((x * 34.0) + 1.0) * x); }
+      vec4 taylorInvSqrt(vec4 r){ return 1.79284291400159 - 0.85373472095314 * r; }
+      float snoise(vec3 v){
+        const vec2 C = vec2(1.0 / 6.0, 1.0 / 3.0);
+        const vec4 D = vec4(0.0, 0.5, 1.0, 2.0);
+        vec3 i  = floor(v + dot(v, C.yyy));
+        vec3 x0 = v - i + dot(i, C.xxx);
+        vec3 g = step(x0.yzx, x0.xyz);
+        vec3 l = 1.0 - g;
+        vec3 i1 = min(g.xyz, l.zxy);
+        vec3 i2 = max(g.xyz, l.zxy);
+        vec3 x1 = x0 - i1 + C.xxx;
+        vec3 x2 = x0 - i2 + C.yyy;
+        vec3 x3 = x0 - D.yyy;
+        i = mod289(i);
+        vec4 p = permute(permute(permute(
+                   i.z + vec4(0.0, i1.z, i2.z, 1.0))
+                 + i.y + vec4(0.0, i1.y, i2.y, 1.0))
+                 + i.x + vec4(0.0, i1.x, i2.x, 1.0));
+        float n_ = 0.142857142857;
+        vec3 ns = n_ * D.wyz - D.xzx;
+        vec4 j = p - 49.0 * floor(p * ns.z * ns.z);
+        vec4 x_ = floor(j * ns.z);
+        vec4 y_ = floor(j - 7.0 * x_);
+        vec4 x = x_ * ns.x + ns.yyyy;
+        vec4 y = y_ * ns.x + ns.yyyy;
+        vec4 h = 1.0 - abs(x) - abs(y);
+        vec4 b0 = vec4(x.xy, y.xy);
+        vec4 b1 = vec4(x.zw, y.zw);
+        vec4 s0 = floor(b0) * 2.0 + 1.0;
+        vec4 s1 = floor(b1) * 2.0 + 1.0;
+        vec4 sh = -step(h, vec4(0.0));
+        vec4 a0 = b0.xzyw + s0.xzyw * sh.xxyy;
+        vec4 a1 = b1.xzyw + s1.xzyw * sh.zzww;
+        vec3 p0 = vec3(a0.xy, h.x);
+        vec3 p1 = vec3(a0.zw, h.y);
+        vec3 p2 = vec3(a1.xy, h.z);
+        vec3 p3 = vec3(a1.zw, h.w);
+        vec4 norm = taylorInvSqrt(vec4(dot(p0,p0), dot(p1,p1), dot(p2,p2), dot(p3,p3)));
+        p0 *= norm.x; p1 *= norm.y; p2 *= norm.z; p3 *= norm.w;
+        vec4 m = max(0.6 - vec4(dot(x0,x0), dot(x1,x1), dot(x2,x2), dot(x3,x3)), 0.0);
+        m = m * m;
+        return 42.0 * dot(m * m, vec4(dot(p0,x0), dot(p1,x1), dot(p2,x2), dot(p3,x3)));
+      }
+      float fbm3(vec3 p){
+        float a = 0.5, s = 0.0, n = 0.0;
+        for (int i = 0; i < 5; i++){
+          s += a * snoise(p);
+          n += a;
+          p *= 2.02;
+          a *= 0.5;
+        }
+        return s / n;
+      }
+    `;
+
+    /* ------------------------------------------------------------------ */
+    /*  하늘                                                                */
+    /* ------------------------------------------------------------------ */
+    const skyUniforms = {
+      uTime:      { value: 0 },
+      uSunDir:    { value: SUN_DIR.clone() },
+      uPlanetDir: { value: PLANET_DIR.clone() },
+      uHorizon:   { value: HORIZON.clone().multiplyScalar(1.05) },
+      uZenith:    { value: ZENITH.clone() }
+    };
+
+    const skyMat = new THREE.ShaderMaterial({
+      uniforms: skyUniforms,
+      side: THREE.BackSide,
+      depthWrite: false,
+      depthTest: false,
+      vertexShader: `
+        varying vec3 vDir;
+        void main(){
+          vDir = position;
+          gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        }
+      `,
+      fragmentShader: `
+        varying vec3 vDir;
+        uniform float uTime;
+        uniform vec3 uSunDir;
+        uniform vec3 uPlanetDir;
+        uniform vec3 uHorizon;
+        uniform vec3 uZenith;
+
+        ${NOISE}
+
+        void main(){
+          vec3 dir = normalize(vDir);
+          float h = dir.y;
+
+          /* ---- 기본 그라디언트 ---- */
+          vec3 hor = uHorizon;
+          vec3 mid = vec3(0.014, 0.026, 0.056);
+          vec3 zen = uZenith;
+
+          float up = clamp(h, 0.0, 1.0);
+          vec3 col = mix(hor, mid, smoothstep(0.0, 0.20, up));
+          col = mix(col, zen, smoothstep(0.12, 0.80, up));
+
+          /* ---- 새벽 노을: 태양 근처에만 머무르게 ---- */
+          float sd = max(dot(dir, uSunDir), 0.0);
+          col += vec3(1.00, 0.54, 0.26) * pow(sd, 30.0) * 1.10;
+          col += vec3(0.98, 0.46, 0.22) * pow(sd, 8.0)  * 0.20;
+          col += vec3(0.50, 0.24, 0.14) * pow(sd, 2.6)  * 0.045;
+
+          /* 지평선 띠 */
+          float hz = exp(-pow(h / 0.05, 2.0));
+          col += vec3(0.36, 0.20, 0.14) * hz * (0.20 + 0.80 * pow(sd, 2.0)) * 0.28;
+
+          /* ---- 행성 헤일로 ---- */
+          float pd = max(dot(dir, uPlanetDir), 0.0);
+          col += vec3(0.28, 0.40, 0.68) * pow(pd, 90.0) * 0.40;
+          col += vec3(0.16, 0.24, 0.44) * pow(pd, 16.0) * 0.07;
+
+          /* ---- 별 ---- */
+          vec3 stars = vec3(0.0);
+          vec3 sp = dir * 260.0;
+          vec3 cell = floor(sp);
+          vec3 fp = fract(sp) - 0.5;
+          float rnd = hash13(cell);
+          if (rnd > 0.970){
+            vec3 off = vec3(hash13(cell + 1.7), hash13(cell + 9.1), hash13(cell + 4.3)) - 0.5;
+            float d = length(fp - off * 0.62);
+            float tw = 0.62 + 0.38 * sin(uTime * (0.7 + rnd * 2.4) + rnd * 40.0);
+            float mag = pow(clamp((rnd - 0.970) / 0.030, 0.0, 1.0), 1.8);
+            stars += vec3(0.86, 0.91, 1.0) * (1.0 - smoothstep(0.0, 0.085, d)) * tw * (0.22 + mag * 1.5);
+          }
+          stars *= smoothstep(0.02, 0.30, h) * (1.0 - 0.85 * pow(sd, 3.0));
+          col += stars;
+
+          /* ---- 은하수 ---- */
+          vec3 mwN = normalize(vec3(0.42, 0.46, 0.78));
+          float bd = dot(dir, mwN);
+          float band = exp(-bd * bd * 9.0);
+          float neb  = fbm3(dir * 2.2 + vec3(4.0, 1.0, -2.0)) * 0.5 + 0.5;
+          float dust = smoothstep(0.32, 0.80, fbm3(dir * 4.5 - vec3(2.0, 3.0, 1.0)) * 0.5 + 0.5);
+          vec3 mw = mix(vec3(0.10, 0.12, 0.22), vec3(0.30, 0.29, 0.40), neb);
+          mw *= (0.45 + 0.55 * neb) * (1.0 - 0.62 * dust);
+          col += mw * band * 0.20 * smoothstep(0.02, 0.28, h);
+
+          /* ---- 오로라 (아주 옅게) ---- */
+          float az = atan(dir.x, dir.z);
+          float ribbonY = 0.46 + 0.10 * sin(az * 1.7 + 0.6);
+          float ribbon = exp(-pow((h - ribbonY) / 0.17, 2.0));
+          float streak = 0.5 + 0.5 * sin(az * 52.0 + fbm3(vec3(az * 3.0, h * 5.0, uTime * 0.03)) * 6.0);
+          float aur = ribbon * pow(streak, 2.6) * smoothstep(0.18, 0.55, h);
+          vec3 aurCol = mix(vec3(0.22, 1.0, 0.62), vec3(0.42, 0.34, 1.0), smoothstep(0.35, 0.85, h));
+          col += aurCol * aur * 0.035;
+
+          /* ---- 지평선 근처 옅은 구름 ---- */
+          float cl = fbm3(vec3(dir.x * 2.4, dir.y * 15.0, dir.z * 2.4) + vec3(uTime * 0.004, 0.0, 0.0)) * 0.5 + 0.5;
+          float band2 = 1.0 - smoothstep(0.0, 0.10, abs(h - 0.055));
+          float cloud = smoothstep(0.28, 0.78, cl) * band2;
+          col += vec3(0.55, 0.29, 0.17) * cloud * pow(sd, 2.6) * 0.55;
+
+          /* ---- 지평선 아래는 안개색으로 ---- */
+          col = mix(hor * 0.75, col, smoothstep(-0.05, 0.02, h));
+
+          gl_FragColor = vec4(col, 1.0);
+        }
+      `
+    });
+
+    const sky = new THREE.Mesh(new THREE.SphereGeometry(9000, 48, 32), skyMat);
+    sky.frustumCulled = false;
+    sky.renderOrder = -1000;
+    scene.add(sky);
+
+    /* ------------------------------------------------------------------ */
+    /*  행성 + 고리                                                         */
+    /* ------------------------------------------------------------------ */
+    const PLANET_DIST = 6400;
+    const PLANET_R    = 700;
+    const RING_INNER  = 1.16;
+    const RING_OUTER  = 2.15;
+
+    const planetPos = PLANET_DIR.clone().multiplyScalar(PLANET_DIST);
+
+    const ringAxis = new THREE.Vector3(0.16, 0.84, 0.52).normalize();
+    const planetQuat = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), ringAxis);
+    const planetQuatInv = planetQuat.clone().invert();
+
+    const sunLocal = SUN_DIR.clone().applyQuaternion(planetQuatInv).normalize();
+    const ringNormalWorld = new THREE.Vector3(0, 1, 0).applyQuaternion(planetQuat).normalize();
+
+    const planetGroup = new THREE.Group();
+    planetGroup.position.copy(planetPos);
+    planetGroup.quaternion.copy(planetQuat);
+    scene.add(planetGroup);
+
+    const planetMat = new THREE.ShaderMaterial({
+      uniforms: {
+        uTime:      { value: 0 },
+        uSunDir:    { value: SUN_DIR.clone() },
+        uSunLocal:  { value: sunLocal.clone() },
+        uRingInner: { value: RING_INNER },
+        uRingOuter: { value: RING_OUTER }
+      },
+      vertexShader: `
+        varying vec3 vLocal;
+        varying vec3 vWorld;
+        varying vec3 vNormalW;
+        void main(){
+          vLocal = position;
+          vec4 wp = modelMatrix * vec4(position, 1.0);
+          vWorld = wp.xyz;
+          vNormalW = normalize(mat3(modelMatrix) * normal);
+          gl_Position = projectionMatrix * viewMatrix * wp;
+        }
+      `,
+      fragmentShader: `
+        varying vec3 vLocal;
+        varying vec3 vWorld;
+        varying vec3 vNormalW;
+
+        uniform float uTime;
+        uniform vec3 uSunDir;
+        uniform vec3 uSunLocal;
+        uniform float uRingInner;
+        uniform float uRingOuter;
+
+        ${NOISE}
+
+        void main(){
+          vec3 n = normalize(vLocal);
+          float lat = n.y;
+
+          float tt = uTime * 0.0035;
+          float warp = snoise(vec3(lat * 4.0, tt * 3.0, 1.7)) * 0.40;
+
+          float bands = 0.0;
+          bands += 0.52 * snoise(vec3(lat * 6.5 + warp, 1.3, tt));
+          bands += 0.27 * snoise(vec3(lat * 14.0 - warp * 1.6, 4.1, tt * 1.7));
+          bands += 0.13 * snoise(vec3(lat * 31.0 + warp * 2.1, 9.3, tt * 2.3));
+          bands = bands * 0.5 + 0.5;
+
+          float streak = snoise(vec3(lat * 88.0, tt * 4.0, 2.0)) * 0.5 + 0.5;
+          bands = mix(bands, bands * 0.72 + streak * 0.28, 0.35);
+
+          vec3 cCream = vec3(0.96, 0.88, 0.72);
+          vec3 cTan   = vec3(0.80, 0.60, 0.40);
+          vec3 cBlue  = vec3(0.48, 0.58, 0.72);
+          vec3 cRust  = vec3(0.62, 0.36, 0.22);
+
+          float b = smoothstep(0.28, 0.72, bands);
+          vec3 surf = mix(cRust, cTan, smoothstep(0.0, 0.42, b));
+          surf = mix(surf, cCream, smoothstep(0.40, 0.72, b));
+          surf = mix(surf, cBlue, smoothstep(0.80, 1.0, b) * 0.75);
+          surf = mix(surf, vec3(0.72, 0.78, 0.88), smoothstep(0.72, 0.98, abs(lat)) * 0.5);
+
+          float ndl = dot(normalize(vNormalW), uSunDir);
+          float day = smoothstep(-0.07, 0.24, ndl);
+          vec3 col = surf * (0.045 + 0.955 * day);
+
+          vec3 V = normalize(cameraPosition - vWorld);
+          float mu = clamp(dot(normalize(vNormalW), V), 0.0, 1.0);
+          col *= 0.42 + 0.58 * pow(mu, 0.55);
+
+          float rim = pow(1.0 - mu, 3.0);
+          col += vec3(0.55, 0.72, 1.0) * rim * smoothstep(-0.22, 0.30, ndl) * 1.7;
+          col += vec3(0.08, 0.14, 0.26) * rim * (1.0 - day) * 0.6;
+
+          /* 고리 그림자 */
+          if (abs(uSunLocal.y) > 0.02){
+            float tHit = -n.y / uSunLocal.y;
+            if (tHit > 0.0){
+              vec3 hp = n + tHit * uSunLocal;
+              float rh = length(hp.xz);
+              if (rh > uRingInner && rh < uRingOuter) col *= 0.70;
+            }
+          }
+
+          gl_FragColor = vec4(col, 1.0);
+        }
+      `
+    });
+
+    const planetMesh = new THREE.Mesh(new THREE.SphereGeometry(1, 72, 48), planetMat);
+    planetMesh.scale.setScalar(PLANET_R);
+    planetGroup.add(planetMesh);
+
+    const ringGeo = new THREE.RingGeometry(RING_INNER, RING_OUTER, 256, 6);
+    ringGeo.rotateX(-Math.PI / 2);
+
+    const ringMat = new THREE.ShaderMaterial({
+      uniforms: {
+        uSunDir:    { value: SUN_DIR.clone() },
+        uPlanetPos: { value: planetPos.clone() },
+        uRingNormal:{ value: ringNormalWorld.clone() },
+        uPlanetR:   { value: PLANET_R },
+        uInner:     { value: RING_INNER },
+        uOuter:     { value: RING_OUTER }
+      },
+      transparent: true,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+      vertexShader: `
+        varying float vR;
+        varying vec3 vWorld;
+        void main(){
+          vR = length(position.xz);
+          vec4 wp = modelMatrix * vec4(position, 1.0);
+          vWorld = wp.xyz;
+          gl_Position = projectionMatrix * viewMatrix * wp;
+        }
+      `,
+      fragmentShader: `
+        varying float vR;
+        varying vec3 vWorld;
+
+        uniform vec3 uSunDir;
+        uniform vec3 uPlanetPos;
+        uniform vec3 uRingNormal;
+        uniform float uPlanetR;
+        uniform float uInner;
+        uniform float uOuter;
+
+        ${NOISE}
+
+        void main(){
+          float t = (vR - uInner) / (uOuter - uInner);
+          if (t < 0.0 || t > 1.0) discard;
+
+          float dens = 0.76 + 0.24 * (snoise(vec3(t * 42.0, 0.0, 0.0)) * 0.5 + 0.5);
+          dens *= 0.86 + 0.14 * (snoise(vec3(t * 105.0, 3.0, 0.0)) * 0.5 + 0.5);
+
+          dens *= 1.0 - 0.80 * exp(-pow((t - 0.635) / 0.016, 2.0));
+          dens *= 1.0 - 0.55 * exp(-pow((t - 0.335) / 0.010, 2.0));
+          dens *= 1.0 - 0.40 * exp(-pow((t - 0.820) / 0.008, 2.0));
+          dens *= smoothstep(0.0, 0.04, t) * (1.0 - smoothstep(0.95, 1.0, t));
+
+          vec3 rel = vWorld - uPlanetPos;
+          float along = dot(rel, uSunDir);
+          float perp = length(rel - along * uSunDir);
+          float shadow = (along < 0.0 && perp < uPlanetR) ? 0.10 : 1.0;
+
+          float lit = 0.55 + 0.45 * abs(dot(normalize(uRingNormal), uSunDir));
+          vec3 col = mix(vec3(0.62, 0.56, 0.47), vec3(0.82, 0.78, 0.70),
+                         snoise(vec3(t * 30.0, 1.0, 0.0)) * 0.5 + 0.5);
+          col *= lit * shadow;
+
+          gl_FragColor = vec4(col, clamp(dens, 0.0, 1.0) * 0.80);
+        }
+      `
+    });
+
+    const ringMesh = new THREE.Mesh(ringGeo, ringMat);
+    ringMesh.scale.setScalar(PLANET_R);
+    ringMesh.renderOrder = 5;
+    planetGroup.add(ringMesh);
+
+    /* ------------------------------------------------------------------ */
+    /*  지형                                                                */
+    /* ------------------------------------------------------------------ */
+    const T_SIZE = 4000;
+    const T_SEG  = 360;
+
+    function terrainH (x, z) {
+      const r0 = Math.hypot(x, z);
+      const ang = Math.atan2(z, x);
+      const shoreN = fbm2(Math.cos(ang) * 1.7 + 5.1, Math.sin(ang) * 1.7 - 2.3, 3);
+      const r = r0 * (1.0 + 0.11 * (shoreN - 0.5));
+
+      const shore = smoothstep(150, 236, r);
+      let h = -34 + 38 * shore;
+
+      const m = smoothstep(236, 900, r);
+      const ridge = ridged2(x * 0.0019 + 7.3, z * 0.0019 - 2.1, 5);
+      const massif = fbm2(x * 0.00055 + 2.0, z * 0.00055 - 7.0, 3);
+      const broad = fbm2(x * 0.0011 - 3.4, z * 0.0011 + 9.1, 4);
+
+      const az = Math.atan2(x, -z);
+      const side = 0.42 + 0.95 * Math.pow(Math.abs(Math.sin(az)), 1.6);
+
+      const shape = Math.pow(ridge, 1.5) * (0.45 + 0.75 * massif);
+      const amp = (70 + 620 * shape + 90 * broad) * side;
+      h += Math.pow(m, 1.2) * amp;
+
+      const far = smoothstep(900, 2200, r);
+      h += far * (140 + 760 * Math.pow(ridged2(x * 0.0007 + 1.3, z * 0.0007 + 4.2, 4), 1.7))
+             * (0.50 + 0.80 * Math.pow(Math.abs(Math.sin(az)), 1.2));
+
+      h += m * (ridged2(x * 0.0075 - 1.0, z * 0.0075 + 3.0, 3) - 0.5) * 46;
+      h += smoothstep(200, 320, r) * (fbm2(x * 0.011, z * 0.011, 3) - 0.5) * 14;
+      return h;
+    }
+
+    const terrainGeo = new THREE.PlaneGeometry(T_SIZE, T_SIZE, T_SEG, T_SEG);
+    terrainGeo.rotateX(-Math.PI / 2);
+
+    {
+      const W = T_SEG + 1;
+      const pos = terrainGeo.attributes.position;
+      const H = new Float32Array(W * W);
+
+      for (let i = 0; i < pos.count; i++) {
+        const x = pos.getX(i), z = pos.getZ(i);
+        const y = terrainH(x, z);
+        H[i] = y;
+        pos.setY(i, y);
+      }
+      pos.needsUpdate = true;
+      terrainGeo.computeVertexNormals();
+
+      const nrm = terrainGeo.attributes.normal;
+      const colors = new Float32Array(pos.count * 3);
+
+      const cRock  = new THREE.Color('#0b0f16');
+      const cWarm  = new THREE.Color('#171a22');
+      const cSnow  = new THREE.Color('#a8bcd8');
+      const cGravel= new THREE.Color('#14161c');
+      const cStrata= new THREE.Color('#1c2430');
+      const tmp = new THREE.Color();
+
+      for (let i = 0; i < pos.count; i++) {
+        const x = pos.getX(i), y = H[i], z = pos.getZ(i);
+        const ny = nrm.getY(i);
+        const n = fbm2(x * 0.006 + 4.0, z * 0.006 - 2.0, 3);
+        const strata = fbm2(x * 0.017 - 2.0, z * 0.017 + 5.0, 3);
+
+        tmp.copy(cRock).lerp(cWarm, n * 0.75);
+        tmp.lerp(cStrata, strata * 0.40);
+
+        const alt  = smoothstep(205, 345, y + (n - 0.5) * 95);
+        const flat = smoothstep(0.40, 0.72, ny);
+        tmp.lerp(cSnow, alt * flat * 0.92);
+
+        const beach = (1.0 - smoothstep(0.0, 22.0, y)) * smoothstep(-6.0, 1.0, y);
+        tmp.lerp(cGravel, beach * 0.7);
+
+        const ix = i % W, iy = (i / W) | 0;
+        let cav = 0;
+        if (ix > 0 && ix < W - 1 && iy > 0 && iy < W - 1) {
+          const lap = H[i - 1] + H[i + 1] + H[i - W] + H[i + W] - 4.0 * H[i];
+          cav = clamp(-lap / 26.0, -1, 1);
+        }
+        tmp.multiplyScalar(1.0 + 0.30 * cav);
+
+        colors[i * 3]     = tmp.r;
+        colors[i * 3 + 1] = tmp.g;
+        colors[i * 3 + 2] = tmp.b;
+      }
+      terrainGeo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+    }
+
+    function makeRockNormalMap (size) {
+      const cv = document.createElement('canvas');
+      cv.width = cv.height = size;
+      const ctx = cv.getContext('2d');
+      const img = ctx.createImageData(size, size);
+      const hgt = new Float32Array(size * size);
+
+      for (let y = 0; y < size; y++) {
+        for (let x = 0; x < size; x++) {
+          const u = x / size, v = y / size;
+          hgt[y * size + x] =
+            0.60 * fbm2(u * 7.0 + 1.7, v * 7.0 - 3.1, 4) +
+            0.40 * fbm2(u * 23.0 - 4.0, v * 23.0 + 8.0, 3);
+        }
+      }
+      for (let y = 0; y < size; y++) {
+        for (let x = 0; x < size; x++) {
+          const xm = (x - 1 + size) % size, xp = (x + 1) % size;
+          const ym = (y - 1 + size) % size, yp = (y + 1) % size;
+          const dx = (hgt[y * size + xp] - hgt[y * size + xm]) * 9.0;
+          const dy = (hgt[yp * size + x] - hgt[ym * size + x]) * 9.0;
+          let nx = -dx, ny = dy, nz = 1.0;
+          const l = Math.hypot(nx, ny, nz);
+          const i = (y * size + x) * 4;
+          img.data[i]     = (nx / l * 0.5 + 0.5) * 255;
+          img.data[i + 1] = (ny / l * 0.5 + 0.5) * 255;
+          img.data[i + 2] = (nz / l * 0.5 + 0.5) * 255;
+          img.data[i + 3] = 255;
+        }
+      }
+      ctx.putImageData(img, 0, 0);
+      const tex = new THREE.CanvasTexture(cv);
+      tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+      tex.repeat.set(220, 220);
+      tex.anisotropy = 4;
+      return tex;
+    }
+
+    const terrainMat = new THREE.MeshStandardMaterial({
+      vertexColors: true,
+      roughness: 0.94,
+      metalness: 0.0,
+      normalMap: makeRockNormalMap(256),
+      normalScale: new THREE.Vector2(0.9, 0.9)
+    });
+
+    const terrain = new THREE.Mesh(terrainGeo, terrainMat);
+    terrain.frustumCulled = false;
+    scene.add(terrain);
+
+    /* ------------------------------------------------------------------ */
+    /*  나무 (실루엣)                                                       */
+    /* ------------------------------------------------------------------ */
+    function mergeGeoms (geos) {
+      let vCount = 0, iCount = 0;
+      for (const g of geos) {
+        vCount += g.attributes.position.count;
+        iCount += g.index.count;
+      }
+      const pos = new Float32Array(vCount * 3);
+      const nor = new Float32Array(vCount * 3);
+      const idx = new Uint32Array(iCount);
+      let vo = 0, io = 0;
+      for (const g of geos) {
+        pos.set(g.attributes.position.array, vo * 3);
+        nor.set(g.attributes.normal.array, vo * 3);
+        const gi = g.index.array;
+        for (let i = 0; i < gi.length; i++) idx[io + i] = gi[i] + vo;
+        vo += g.attributes.position.count;
+        io += gi.length;
+      }
+      const out = new THREE.BufferGeometry();
+      out.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+      out.setAttribute('normal', new THREE.BufferAttribute(nor, 3));
+      out.setIndex(new THREE.BufferAttribute(idx, 1));
+      return out;
+    }
+
+    function coneTree () {
+      const parts = [];
+      const trunk = new THREE.CylinderGeometry(0.16, 0.30, 3.4, 5, 1);
+      trunk.translate(0, 1.7, 0);
+      parts.push(trunk);
+
+      let y = 2.2, r = 2.9, hh = 4.4;
+      for (let k = 0; k < 4; k++) {
+        const c = new THREE.ConeGeometry(r, hh, 7, 1);
+        c.translate(0, y + hh * 0.5, 0);
+        parts.push(c);
+        y += hh * 0.55;
+        r *= 0.74;
+        hh *= 0.86;
+      }
+      return mergeGeoms(parts);
+    }
+
+    const treeGeo = coneTree();
+    const treeMat = new THREE.MeshStandardMaterial({
+      color: 0x0a1116, roughness: 1.0, metalness: 0.0
+    });
+
+    const treeSpots = [];
+
+    function slopeAt (x, z, e) {
+      const hx = terrainH(x + e, z) - terrainH(x - e, z);
+      const hz = terrainH(x, z + e) - terrainH(x, z - e);
+      return Math.hypot(hx, hz) / (2 * e);
+    }
+
+    function tryTree (x, z, sMin, sMax) {
+      const h = terrainH(x, z);
+      if (h < 2.0) return;
+      if (slopeAt(x, z, 7) > 0.62) return;
+      treeSpots.push({
+        x, z, y: h - 1.6,
+        s: sMin + rand() * (sMax - sMin),
+        rot: rand() * Math.PI * 2
+      });
+    }
+
+    // 먼 기슭 숲
+    for (let i = 0; i < 320; i++) {
+      const x = (rand() * 2 - 1) * 620;
+      const z = -250 - rand() * 240;
+      tryTree(x, z, 1.0, 1.9);
+    }
+    // 좌우 사면 숲
+    for (let i = 0; i < 260; i++) {
+      const sideSign = rand() < 0.5 ? -1 : 1;
+      const x = sideSign * (260 + rand() * 520);
+      const z = -120 - rand() * 700;
+      tryTree(x, z, 0.9, 2.0);
+    }
+    // 강조할 한 그루
+    tryTree(-186, -268, 2.3, 2.3);
+    tryTree(-214, -276, 1.9, 1.9);
+
+    const trees = new THREE.InstancedMesh(treeGeo, treeMat, treeSpots.length);
+    {
+      const dummy = new THREE.Object3D();
+      for (let i = 0; i < treeSpots.length; i++) {
+        const t = treeSpots[i];
+        dummy.position.set(t.x, t.y, t.z);
+        dummy.rotation.set(0, t.rot, 0);
+        dummy.scale.set(t.s * 0.92, t.s, t.s * 0.92);
+        dummy.updateMatrix();
+        trees.setMatrixAt(i, dummy.matrix);
+      }
+      trees.instanceMatrix.needsUpdate = true;
+      trees.frustumCulled = false;
+    }
+    scene.add(trees);
+
+    /* ------------------------------------------------------------------ */
+    /*  바위                                                                */
+    /* ------------------------------------------------------------------ */
+    const rockGeo = new THREE.IcosahedronGeometry(1, 2);
+    {
+      const p = rockGeo.attributes.position;
+      const v = new THREE.Vector3();
+      for (let i = 0; i < p.count; i++) {
+        v.fromBufferAttribute(p, i).normalize();
+        const rr = 0.58
+          + 0.46 * fbm2(v.x * 1.9 + 5.0, v.z * 1.9 + v.y * 1.3 - 3.0, 3)
+          + 0.20 * fbm2(v.x * 4.6 - 2.0, v.z * 4.6 + v.y * 2.4, 3)
+          + 0.07 * fbm2(v.x * 9.0 + 1.0, v.z * 9.0 - v.y * 4.0, 2);
+        v.multiplyScalar(rr);
+        p.setXYZ(i, v.x, v.y, v.z);
+      }
+      p.needsUpdate = true;
+      rockGeo.computeVertexNormals();
+    }
+
+    const rockMat = new THREE.MeshStandardMaterial({
+      color: 0x14171d, roughness: 0.88, metalness: 0.0
+    });
+
+    const rockSpots = [];
+    for (let i = 0; i < 46; i++) {
+      const sideSign = rand() < 0.5 ? -1 : 1;
+      const x = sideSign * (14 + rand() * 120);
+      const z = 196 + rand() * 40;
+      const h = terrainH(x, z);
+      if (h < -6) continue;
+      rockSpots.push({ x, z, y: Math.max(h, 0) - 1.2, s: 1.0 + rand() * 3.0, rot: rand() * 6.28 });
+    }
+    rockSpots.push({ x: -9.5, z: 214, y: -0.8, s: 2.7, rot: 0.7 });
+    rockSpots.push({ x: 11.0, z: 208, y: -1.0, s: 2.1, rot: 2.1 });
+    rockSpots.push({ x: -2.6, z: 221, y: -1.2, s: 1.5, rot: 4.0 });
+    const rocks = new THREE.InstancedMesh(rockGeo, rockMat, rockSpots.length);
+    {
+      const dummy = new THREE.Object3D();
+      for (let i = 0; i < rockSpots.length; i++) {
+        const r = rockSpots[i];
+        dummy.position.set(r.x, r.y, r.z);
+        dummy.rotation.set(rand() * 0.6, r.rot, rand() * 0.6);
+        dummy.scale.set(r.s, r.s * (0.55 + rand() * 0.5), r.s);
+        dummy.updateMatrix();
+        rocks.setMatrixAt(i, dummy.matrix);
+      }
+      rocks.instanceMatrix.needsUpdate = true;
+      rocks.frustumCulled = false;
+    }
+    scene.add(rocks);
+
+    /* ------------------------------------------------------------------ */
+    /*  물안개                                                              */
+    /* ------------------------------------------------------------------ */
+    function makeMistTexture (size) {
+      const cv = document.createElement('canvas');
+      cv.width = cv.height = size;
+      const ctx = cv.getContext('2d');
+      const img = ctx.createImageData(size, size);
+      for (let y = 0; y < size; y++) {
+        for (let x = 0; x < size; x++) {
+          const u = x / size, v = y / size;
+          let n = fbm2(u * 4.0 + 11.3, v * 3.2 + 4.7, 5);
+          n = smoothstep(0.34, 0.72, n);
+          const edge = Math.pow(Math.sin(Math.PI * u), 1.15) * Math.pow(Math.sin(Math.PI * v), 1.7);
+          const a = clamp(n * edge * 1.5, 0, 1);
+          const i = (y * size + x) * 4;
+          img.data[i] = 255;
+          img.data[i + 1] = 255;
+          img.data[i + 2] = 255;
+          img.data[i + 3] = Math.round(a * 255);
+        }
+      }
+      ctx.putImageData(img, 0, 0);
+      const tex = new THREE.CanvasTexture(cv);
+      tex.minFilter = THREE.LinearFilter;
+      tex.magFilter = THREE.LinearFilter;
+      tex.wrapS = tex.wrapT = THREE.ClampToEdgeWrapping;
+      return tex;
+    }
+
+    const mistTex = makeMistTexture(256);
+    const mistMat = new THREE.MeshBasicMaterial({
+      map: mistTex, transparent: true, depthWrite: false,
+      color: 0x93a8c6, opacity: 0.30, fog: true
+    });
+
+    const mists = [];
+    const mistDefs = [
+      { x: -120, y: 16,  z: -330,  w: 780,  h: 150, o: 0.09 },
+      { x:  260, y: 22,  z: -520,  w: 1050, h: 190, o: 0.10 },
+      { x: -380, y: 30,  z: -760,  w: 1350, h: 240, o: 0.11 },
+      { x:  180, y: 40,  z: -1080, w: 1750, h: 300, o: 0.13 },
+      { x: -600, y: 26,  z: -900,  w: 1200, h: 220, o: 0.10 }
+    ];
+    for (const d of mistDefs) {
+      const m = new THREE.Mesh(new THREE.PlaneGeometry(d.w, d.h), mistMat.clone());
+      m.material.opacity = d.o;
+      m.position.set(d.x, d.y, d.z);
+      m.renderOrder = 10;
+      scene.add(m);
+      mists.push({ mesh: m, baseX: d.x, phase: rand() * 6.28, amp: 10 + rand() * 14 });
+    }
+
+    // 수면 위 낮은 안개
+    {
+      const lowMat = new THREE.MeshBasicMaterial({
+        map: mistTex, transparent: true, depthWrite: false,
+        color: 0x8ea6c6, opacity: 0.08, fog: true
+      });
+      const low = new THREE.Mesh(new THREE.PlaneGeometry(1500, 900), lowMat);
+      low.rotation.x = -Math.PI / 2;
+      low.position.set(0, 2.2, -260);
+      low.renderOrder = 9;
+      scene.add(low);
+    }
+
+    /* ------------------------------------------------------------------ */
+    /*  물 + 실시간 반사                                                    */
+    /* ------------------------------------------------------------------ */
+    const waterGeo = new THREE.PlaneGeometry(9000, 9000, 1, 1);
+    waterGeo.rotateX(-Math.PI / 2);
+
+    const waterMat = new THREE.ShaderMaterial({
+      uniforms: {
+        tReflect:   { value: null },
+        uTexMatrix: { value: new THREE.Matrix4() },
+        uTime:      { value: 0 },
+        uSunDir:    { value: SUN_DIR.clone() },
+        uDeep:      { value: DEEP.clone() },
+        uFogColor:  { value: HORIZON.clone() },
+        uFogDensity:{ value: FOG_DENSITY }
+      },
+      vertexShader: `
+        uniform mat4 uTexMatrix;
+        varying vec4 vUvRefl;
+        varying vec3 vWorld;
+        void main(){
+          vec4 wp = modelMatrix * vec4(position, 1.0);
+          vWorld = wp.xyz;
+          vUvRefl = uTexMatrix * vec4(position, 1.0);
+          gl_Position = projectionMatrix * viewMatrix * wp;
+        }
+      `,
+      fragmentShader: `
+        uniform sampler2D tReflect;
+        uniform vec3 uSunDir;
+        uniform vec3 uDeep;
+        uniform vec3 uFogColor;
+        uniform float uFogDensity;
+        uniform float uTime;
+        varying vec4 vUvRefl;
+        varying vec3 vWorld;
+
+        ${NOISE}
+
+        void main(){
+          vec3 V = cameraPosition - vWorld;
+          float dist = length(V);
+          V /= dist;
+
+          vec2 p = vWorld.xz;
+          float t = uTime;
+          float n1 = snoise(vec3(p * 0.030, t * 0.045));
+          float n2 = snoise(vec3(p * 0.085 + 13.0, t * 0.070));
+          float n3 = snoise(vec3(p * 0.170 - 7.0, t * 0.090));
+          vec2 g = vec2(n1 * 0.58 + n2 * 0.34 + n3 * 0.08,
+                        n1 * 0.20 - n2 * 0.45 + n3 * 0.35);
+
+          vec2 uv = vUvRefl.xy / vUvRefl.w;
+          uv += g * 0.0050 * (0.55 + 0.45 * exp(-dist * 0.004));
+          uv = clamp(uv, vec2(0.0015), vec2(0.9985));
+          vec3 refl = texture2D(tReflect, uv).rgb;
+
+          vec3 N = normalize(vec3(-g.x * 0.10, 1.0, -g.y * 0.10));
+          float cosT = clamp(dot(N, V), 0.0, 1.0);
+          float F = 0.04 + 0.96 * pow(1.0 - cosT, 5.0);
+          vec3 col = mix(uDeep, refl, clamp(F * 1.32, 0.0, 1.0));
+          col += vec3(0.004, 0.010, 0.017) * (1.0 - F);
+
+          vec3 R = reflect(-V, N);
+          float spec = pow(max(dot(R, uSunDir), 0.0), 320.0);
+          col += vec3(1.0, 0.66, 0.42) * spec * 1.5;
+
+          float f = 1.0 - exp(-uFogDensity * uFogDensity * dist * dist);
+          col = mix(col, uFogColor, clamp(f, 0.0, 1.0));
+
+          gl_FragColor = vec4(col, 1.0);
+        }
+      `
+    });
+
+    const water = new THREE.Mesh(waterGeo, waterMat);
+    water.frustumCulled = false;
+    water.renderOrder = 2;
+    scene.add(water);
+
+    /* --- 반사 카메라 (거울면 y=0) -------------------------------------- */
+    const REFLECT_SCALE = 0.78;
+    let reflectionRT = null;
+
+    const virtualCamera = new THREE.PerspectiveCamera();
+    const reflectorPos = new THREE.Vector3(0, 0, 0);
+    const NORMAL = new THREE.Vector3(0, 1, 0);
+    const reflectorPlane = new THREE.Plane();
+    const texMatrix = new THREE.Matrix4();
+    const _view = new THREE.Vector3();
+    const _lookAt = new THREE.Vector3();
+    const _target = new THREE.Vector3();
+    const _rot = new THREE.Matrix4();
+    const _clip = new THREE.Vector4();
+    const _q = new THREE.Vector4();
+
+    function makeRenderTargets () {
+      const dpr = renderer.getPixelRatio();
+      const w = Math.max(2, Math.floor(window.innerWidth * dpr));
+      const h = Math.max(2, Math.floor(window.innerHeight * dpr));
+
+      if (reflectionRT) reflectionRT.dispose();
+      reflectionRT = new THREE.WebGLRenderTarget(
+        Math.max(2, Math.floor(w * REFLECT_SCALE)),
+        Math.max(2, Math.floor(h * REFLECT_SCALE)),
+        { type: THREE.HalfFloatType, depthBuffer: true, stencilBuffer: false }
+      );
+      reflectionRT.texture.minFilter = THREE.LinearFilter;
+      reflectionRT.texture.magFilter = THREE.LinearFilter;
+      waterMat.uniforms.tReflect.value = reflectionRT.texture;
+
+      return { w, h };
+    }
+
+    let RT = makeRenderTargets();
+
+    function renderReflection () {
+      camera.updateMatrixWorld();
+      water.updateMatrixWorld();
+      _view.subVectors(reflectorPos, camera.position);
+      if (_view.dot(NORMAL) > 0) return;
+      _view.reflect(NORMAL).negate().add(reflectorPos);
+
+      _rot.extractRotation(camera.matrixWorld);
+      _lookAt.set(0, 0, -1).applyMatrix4(_rot).add(camera.position);
+      _target.subVectors(reflectorPos, _lookAt).reflect(NORMAL).negate().add(reflectorPos);
+
+      virtualCamera.position.copy(_view);
+      virtualCamera.up.set(0, 1, 0).applyMatrix4(_rot).reflect(NORMAL);
+      virtualCamera.lookAt(_target);
+      virtualCamera.far = camera.far;
+      virtualCamera.updateMatrixWorld();
+      virtualCamera.projectionMatrix.copy(camera.projectionMatrix);
+
+      texMatrix.set(
+        0.5, 0.0, 0.0, 0.5,
+        0.0, 0.5, 0.0, 0.5,
+        0.0, 0.0, 0.5, 0.5,
+        0.0, 0.0, 0.0, 1.0
+      );
+      texMatrix.multiply(virtualCamera.projectionMatrix);
+      texMatrix.multiply(virtualCamera.matrixWorldInverse);
+      texMatrix.multiply(water.matrixWorld);
+      waterMat.uniforms.uTexMatrix.value.copy(texMatrix);
+
+      // 비스듬한 근접 클리핑 평면 (수면 아래 지오메트리 제거)
+      reflectorPlane.setFromNormalAndCoplanarPoint(NORMAL, reflectorPos);
+      reflectorPlane.applyMatrix4(virtualCamera.matrixWorldInverse);
+      _clip.set(reflectorPlane.normal.x, reflectorPlane.normal.y, reflectorPlane.normal.z, reflectorPlane.constant);
+
+      const pm = virtualCamera.projectionMatrix;
+      _q.x = (Math.sign(_clip.x) + pm.elements[8]) / pm.elements[0];
+      _q.y = (Math.sign(_clip.y) + pm.elements[9]) / pm.elements[5];
+      _q.z = -1.0;
+      _q.w = (1.0 + pm.elements[10]) / pm.elements[14];
+      _clip.multiplyScalar(2.0 / _clip.dot(_q));
+
+      pm.elements[2]  = _clip.x;
+      pm.elements[6]  = _clip.y;
+      pm.elements[10] = _clip.z + 1.0 - 0.003;
+      pm.elements[14] = _clip.w;
+
+      water.visible = false;
+      renderer.setRenderTarget(reflectionRT);
+      renderer.clear();
+      renderer.render(scene, virtualCamera);
+      renderer.setRenderTarget(null);
+      water.visible = true;
+    }
+
+    /* ------------------------------------------------------------------ */
+    /*  포스트 프로세스 (수작업 블룸 + ACES 톤매핑)                          */
+    /* ------------------------------------------------------------------ */
+    const fsScene = new THREE.Scene();
+    const fsCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+    const fsQuad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), null);
+    fsQuad.frustumCulled = false;
+    fsScene.add(fsQuad);
+
+    const FS_VERT = `
+      varying vec2 vUv;
+      void main(){
+        vUv = uv;
+        gl_Position = vec4(position.xy, 0.0, 1.0);
+      }
+    `;
+
+    const brightMat = new THREE.ShaderMaterial({
+      uniforms: {
+        tDiffuse:   { value: null },
+        uThreshold: { value: 0.72 },
+        uKnee:      { value: 0.38 }
+      },
+      vertexShader: FS_VERT,
+      fragmentShader: `
+        varying vec2 vUv;
+        uniform sampler2D tDiffuse;
+        uniform float uThreshold;
+        uniform float uKnee;
+        void main(){
+          vec3 c = texture2D(tDiffuse, vUv).rgb;
+          float l = max(c.r, max(c.g, c.b));
+          float soft = clamp(l - uThreshold + uKnee, 0.0, 2.0 * uKnee);
+          soft = soft * soft / (4.0 * uKnee + 1e-4);
+          float contrib = max(soft, l - uThreshold) / max(l, 1e-4);
+          gl_FragColor = vec4(c * contrib, 1.0);
+        }
+      `,
+      depthTest: false, depthWrite: false
+    });
+
+    const blurMat = new THREE.ShaderMaterial({
+      uniforms: {
+        tDiffuse: { value: null },
+        uDir:     { value: new THREE.Vector2(1 / 512, 0) }
+      },
+      vertexShader: FS_VERT,
+      fragmentShader: `
+        varying vec2 vUv;
+        uniform sampler2D tDiffuse;
+        uniform vec2 uDir;
+        void main(){
+          vec3 c = texture2D(tDiffuse, vUv).rgb * 0.227027;
+          c += texture2D(tDiffuse, vUv + uDir * 1.384615).rgb * 0.316216;
+          c += texture2D(tDiffuse, vUv - uDir * 1.384615).rgb * 0.316216;
+          c += texture2D(tDiffuse, vUv + uDir * 3.230769).rgb * 0.070270;
+          c += texture2D(tDiffuse, vUv - uDir * 3.230769).rgb * 0.070270;
+          gl_FragColor = vec4(c, 1.0);
+        }
+      `,
+      depthTest: false, depthWrite: false
+    });
+
+    const compMat = new THREE.ShaderMaterial({
+      uniforms: {
+        tScene:     { value: null },
+        tBloom:     { value: null },
+        uExposure:  { value: 1.12 },
+        uTime:      { value: 0 },
+        uResolution:{ value: new THREE.Vector2(1, 1) }
+      },
+      vertexShader: FS_VERT,
+      fragmentShader: `
+        varying vec2 vUv;
+        uniform sampler2D tScene;
+        uniform sampler2D tBloom;
+        uniform float uExposure;
+        uniform float uTime;
+        uniform vec2 uResolution;
+
+        vec3 aces (vec3 x){
+          const float a = 2.51, b = 0.03, c = 2.43, d = 0.59, e = 0.14;
+          return clamp((x * (a * x + b)) / (x * (c * x + d) + e), 0.0, 1.0);
+        }
+        float hash12 (vec2 p){
+          vec3 p3 = fract(vec3(p.xyx) * 0.1031);
+          p3 += dot(p3, p3.yzx + 33.33);
+          return fract((p3.x + p3.y) * p3.z);
+        }
+
+        void main(){
+          vec3 col = texture2D(tScene, vUv).rgb;
+          vec3 bloom = texture2D(tBloom, vUv).rgb;
+          col += bloom * 0.95;
+
+          col *= uExposure;
+          col = aces(col);
+
+          /* 대비 S 커브 */
+          col = mix(col, col * col * (3.0 - 2.0 * col), 0.32);
+
+          /* 분할 톤: 그림자는 청색, 하이라이트는 따뜻하게 */
+          float lum = dot(col, vec3(0.299, 0.587, 0.114));
+          col *= mix(vec3(0.80, 0.92, 1.14), vec3(1.06, 1.00, 0.94), smoothstep(0.0, 0.55, lum));
+
+          /* 채도 */
+          float g = dot(col, vec3(0.299, 0.587, 0.114));
+          col = mix(vec3(g), col, 1.08);
+
+          vec2 q = vUv - 0.5;
+          float vig = 1.0 - smoothstep(0.28, 1.02, length(q * vec2(1.04, 1.0)));
+          col *= mix(0.66, 1.0, vig);
+
+          float grain = hash12(vUv * uResolution + fract(uTime) * 91.7) - 0.5;
+          col += grain * 0.002;
+
+          col = pow(clamp(col, 0.0, 1.0), vec3(1.0 / 2.2));
+          gl_FragColor = vec4(col, 1.0);
+        }
+      `,
+      depthTest: false, depthWrite: false
+    });
+
+    const fxaaMat = new THREE.ShaderMaterial({
+      uniforms: {
+        tDiffuse: { value: null },
+        uTexel:   { value: new THREE.Vector2(1 / 1024, 1 / 512) }
+      },
+      vertexShader: FS_VERT,
+      fragmentShader: `
+        varying vec2 vUv;
+        uniform sampler2D tDiffuse;
+        uniform vec2 uTexel;
+
+        float luma (vec3 c){ return dot(c, vec3(0.299, 0.587, 0.114)); }
+
+        void main(){
+          vec3 rgbM  = texture2D(tDiffuse, vUv).rgb;
+          vec3 rgbNW = texture2D(tDiffuse, vUv + vec2(-1.0, -1.0) * uTexel).rgb;
+          vec3 rgbNE = texture2D(tDiffuse, vUv + vec2( 1.0, -1.0) * uTexel).rgb;
+          vec3 rgbSW = texture2D(tDiffuse, vUv + vec2(-1.0,  1.0) * uTexel).rgb;
+          vec3 rgbSE = texture2D(tDiffuse, vUv + vec2( 1.0,  1.0) * uTexel).rgb;
+
+          float lM  = luma(rgbM);
+          float lNW = luma(rgbNW), lNE = luma(rgbNE), lSW = luma(rgbSW), lSE = luma(rgbSE);
+          float lMin = min(lM, min(min(lNW, lNE), min(lSW, lSE)));
+          float lMax = max(lM, max(max(lNW, lNE), max(lSW, lSE)));
+
+          vec2 dir = vec2(-((lNW + lNE) - (lSW + lSE)), ((lNW + lSW) - (lNE + lSE)));
+          float dirReduce = max((lNW + lNE + lSW + lSE) * 0.03125, 1.0 / 128.0);
+          float rcpDirMin = 1.0 / (min(abs(dir.x), abs(dir.y)) + dirReduce);
+          dir = clamp(dir * rcpDirMin, vec2(-8.0), vec2(8.0)) * uTexel;
+
+          vec3 rgbA = 0.5 * (
+            texture2D(tDiffuse, vUv + dir * (1.0 / 3.0 - 0.5)).rgb +
+            texture2D(tDiffuse, vUv + dir * (2.0 / 3.0 - 0.5)).rgb
+          );
+          vec3 rgbB = rgbA * 0.5 + 0.25 * (
+            texture2D(tDiffuse, vUv + dir * -0.5).rgb +
+            texture2D(tDiffuse, vUv + dir *  0.5).rgb
+          );
+
+          float lB = luma(rgbB);
+          gl_FragColor = vec4((lB < lMin || lB > lMax) ? rgbA : rgbB, 1.0);
+        }
+      `,
+      depthTest: false, depthWrite: false
+    });
+
+    let sceneRT = null, bloomA = null, bloomB = null, ldrRT = null;
+
+    function makePostTargets (w, h) {
+      if (sceneRT) sceneRT.dispose();
+      if (bloomA) bloomA.dispose();
+      if (bloomB) bloomB.dispose();
+      if (ldrRT) ldrRT.dispose();
+
+      sceneRT = new THREE.WebGLRenderTarget(w, h, {
+        type: RT_BYTE ? THREE.UnsignedByteType : THREE.HalfFloatType,
+        depthBuffer: true,
+        samples: MSAA
+      });
+      sceneRT.texture.minFilter = THREE.LinearFilter;
+      sceneRT.texture.magFilter = THREE.LinearFilter;
+
+      const bw = Math.max(2, Math.floor(w / 4));
+      const bh = Math.max(2, Math.floor(h / 4));
+      const opts = { type: THREE.HalfFloatType, depthBuffer: false, stencilBuffer: false };
+      bloomA = new THREE.WebGLRenderTarget(bw, bh, opts);
+      bloomB = new THREE.WebGLRenderTarget(bw, bh, opts);
+      bloomA.texture.minFilter = THREE.LinearFilter;
+      bloomA.texture.magFilter = THREE.LinearFilter;
+      bloomB.texture.minFilter = THREE.LinearFilter;
+      bloomB.texture.magFilter = THREE.LinearFilter;
+
+      compMat.uniforms.uResolution.value.set(w, h);
+
+      ldrRT = new THREE.WebGLRenderTarget(w, h, {
+        type: THREE.UnsignedByteType, depthBuffer: false, stencilBuffer: false
+      });
+      ldrRT.texture.minFilter = THREE.LinearFilter;
+      ldrRT.texture.magFilter = THREE.LinearFilter;
+      fxaaMat.uniforms.uTexel.value.set(1 / w, 1 / h);
+    }
+
+    makePostTargets(RT.w, RT.h);
+
+    function blit (material, target) {
+      fsQuad.material = material;
+      renderer.setRenderTarget(target);
+      renderer.clear();
+      renderer.render(fsScene, fsCam);
+    }
+
+    /* ------------------------------------------------------------------ */
+    /*  카메라 무빙                                                         */
+    /* ------------------------------------------------------------------ */
+    const ptr = { x: 0, y: 0, tx: 0, ty: 0 };
+    window.addEventListener('pointermove', (e) => {
+      ptr.tx = (e.clientX / window.innerWidth) * 2 - 1;
+      ptr.ty = (e.clientY / window.innerHeight) * 2 - 1;
+    }, { passive: true });
+
+    const lookTarget = new THREE.Vector3();
+
+    function updateCamera (t) {
+      ptr.x += (ptr.tx - ptr.x) * 0.035;
+      ptr.y += (ptr.ty - ptr.y) * 0.035;
+
+      const push = 30 * (1 - Math.exp(-t / 150));
+      const cx = 6.5 * Math.sin(t * 0.041) + ptr.x * 13;
+      const cy = 7.2 + 0.60 * Math.sin(t * 0.033 + 1.7) - ptr.y * 2.6;
+      const cz = 233 - push;
+
+      camera.position.set(cx, cy, cz);
+      lookTarget.set(
+        ptr.x * 26 + 3.0 * Math.sin(t * 0.026),
+        40 - ptr.y * 9,
+        -900
+      );
+      camera.lookAt(lookTarget);
+    }
+
+    /* ------------------------------------------------------------------ */
+    /*  리사이즈                                                            */
+    /* ------------------------------------------------------------------ */
+    function resize () {
+      const w = window.innerWidth, h = window.innerHeight;
+      camera.aspect = w / h;
+      camera.updateProjectionMatrix();
+
+      let pr = Math.min(window.devicePixelRatio || 1, 1.5);
+      const raw = w * h * pr * pr;
+      if (raw > MAX_PIXELS) pr *= Math.sqrt(MAX_PIXELS / raw);
+      renderer.setPixelRatio(pr);
+      renderer.setSize(w, h, false);
+
+      RT = makeRenderTargets();
+      makePostTargets(RT.w, RT.h);
+    }
+    window.addEventListener('resize', resize);
+
+    /* ------------------------------------------------------------------ */
+    /*  프레임                                                              */
+    /* ------------------------------------------------------------------ */
+    const clock = new THREE.Clock();
+    let started = false;
+
+    function renderFrame () {
+      skyUniforms.uTime.value = time;
+      planetMat.uniforms.uTime.value = time;
+      waterMat.uniforms.uTime.value = time;
+      compMat.uniforms.uTime.value = time;
+
+      // 안개 천천히 흐르게
+      for (let i = 0; i < mists.length; i++) {
+        const m = mists[i];
+        m.mesh.position.x = m.baseX + Math.sin(time * 0.012 + m.phase) * m.amp;
+        m.mesh.position.y += Math.sin(time * 0.02 + m.phase) * 0.004;
+      }
+
+      updateCamera(time);
+      if (NOREFL) { /* skip */ } else { renderReflection(); }
+
+      if (RAW) {
+        renderer.setRenderTarget(null);
+        renderer.render(scene, camera);
+        if (DEBUG) {
+          dbg('canvas ' + canvas.width + 'x' + canvas.height + ' css ' + canvas.clientWidth + 'x' + canvas.clientHeight);
+          dbg('dpr ' + renderer.getPixelRatio() + ' gl2 ' + renderer.capabilities.isWebGL2);
+          dbg('calls ' + renderer.info.render.calls + ' tris ' + renderer.info.render.triangles);
+          dbg('cam ' + camera.position.toArray().map(n => n.toFixed(1)).join(',') + ' fov ' + camera.fov + ' aspect ' + camera.aspect.toFixed(3));
+          dbg('scene children ' + scene.children.length);
+          const gl = renderer.getContext();
+          dbg('gl err ' + gl.getError() + ' vendor ' + gl.getParameter(gl.VENDOR));
+        }
+        if (!started) {
+          started = true;
+          bootEl.classList.add('done');
+        }
+        return;
+      }
+
+      renderer.setRenderTarget(sceneRT);
+      renderer.clear();
+      renderer.render(scene, camera);
+
+      // 블룸
+      brightMat.uniforms.tDiffuse.value = sceneRT.texture;
+      blit(brightMat, bloomA);
+
+      const bw = bloomA.width, bh = bloomA.height;
+
+      blurMat.uniforms.tDiffuse.value = bloomA.texture;
+      blurMat.uniforms.uDir.value.set(1.0 / bw, 0);
+      blit(blurMat, bloomB);
+
+      blurMat.uniforms.tDiffuse.value = bloomB.texture;
+      blurMat.uniforms.uDir.value.set(0, 1.0 / bh);
+      blit(blurMat, bloomA);
+
+      blurMat.uniforms.tDiffuse.value = bloomA.texture;
+      blurMat.uniforms.uDir.value.set(2.0 / bw, 0);
+      blit(blurMat, bloomB);
+
+      blurMat.uniforms.tDiffuse.value = bloomB.texture;
+      blurMat.uniforms.uDir.value.set(0, 2.0 / bh);
+      blit(blurMat, bloomA);
+
+      compMat.uniforms.tScene.value = sceneRT.texture;
+      compMat.uniforms.tBloom.value = bloomA.texture;
+      blit(compMat, ldrRT);
+
+      fxaaMat.uniforms.tDiffuse.value = ldrRT.texture;
+      blit(fxaaMat, null);
+
+      if (CAPTURE && !window.__captured) {
+        window.__captured = true;
+        try {
+          const el = document.createElement('pre');
+          el.id = 'cap';
+          el.style.cssText = 'position:fixed;left:0;top:0;width:1px;height:1px;overflow:hidden;opacity:.01;';
+          el.textContent = canvas.toDataURL('image/png');
+          document.body.appendChild(el);
+        } catch (e) { dbg('CAPFAIL ' + e.message); }
+      }
+
+      if (DEBUG) {
+        const gl = renderer.getContext();
+        const px = new Uint8Array(4);
+        gl.readPixels(Math.floor(canvas.width / 2), Math.floor(canvas.height / 2), 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px);
+        dbg('center px ' + Array.from(px).join(',') + ' glErr ' + gl.getError());
+        dbg('sceneRT ' + sceneRT.width + 'x' + sceneRT.height + ' samples ' + sceneRT.samples + ' type ' + sceneRT.texture.type);
+      }
+
+      if (!started) {
+        started = true;
+        bootEl.classList.add('done');
+        setTimeout(() => { hudEl.classList.add('on'); }, 700);
+        setTimeout(() => {
+          hintEl.classList.add('on');
+          setTimeout(() => hintEl.classList.add('gone'), 9000);
+        }, 2600);
+      }
+    }
+
+    function tick () {
+      requestAnimationFrame(tick);
+      const dt = Math.min(clock.getDelta(), 0.05);
+      time += dt;
+      frames++;
+      renderFrame();
+    }
+
+    let frames = 0;
+
+    if (DEBUG) {
+      setTimeout(() => dbg('alive frames=' + frames + ' t=' + time.toFixed(1)), 4000);
+    }
+
+    if (STILL) {
+      renderFrame();
+    } else {
+      renderFrame();
+      requestAnimationFrame(tick);
+    }
+  }
+})();
+</script>
+</body>
+</html>
